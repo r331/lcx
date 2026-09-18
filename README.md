@@ -174,6 +174,33 @@ lcx
 | `lcx daily [--pick]` | Show today's daily challenge (optionally scaffold it) |
 | `lcx cache [--update] [--clear]` | Manage the local problem cache |
 | `lcx config [set <key> <value>]` | View or change configuration (`lang`, `editor`, `workspace`) |
+| `lcx sets <list|create|import|add|remove|delete>` | Manage curated and custom problem sets |
+
+### Problem sets
+
+The dashboard has a **Problem Sets** tile between Menu and Profile. Press `Tab` to focus it, select **NeetCode 150**, then choose **All categories** or a category such as **Two Pointers** or **Stack**. The problem list shows each problem's difficulty and NeetCode category. The set is bundled for offline browsing; problem status and IDs come from the local LeetCode cache when available. Run `lcx cache --update` to refresh that cache.
+
+Create a company or personal set with the CLI. It appears in the tile the next time you launch `lcx`:
+
+```sh
+lcx sets create "Meta"
+lcx sets add "Meta" two-sum --category "Arrays & Hashing"
+lcx sets list
+```
+
+For a larger list, create a UTF-8 text file with one `slug,category` pair per line, then import it. LeetCode problem URLs work in place of slugs. A `slug,category` header and lines beginning with `#` are optional.
+
+```text
+slug,category
+two-sum,Arrays & Hashing
+valid-parentheses,Stack
+```
+
+```sh
+lcx sets import "My Company" company-problems.txt
+```
+
+Custom sets live in the app's `sets.json` file alongside its config. The bundled NeetCode 150 data is sourced from [NeetCode's public problem metadata](https://github.com/neetcode-gh/leetcode/blob/main/.problemSiteData.json).
 
 ### Authentication
 

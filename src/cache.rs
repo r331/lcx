@@ -21,6 +21,15 @@ pub struct ListFilter {
 }
 
 impl Cache {
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self> {
+        let cache = Self {
+            conn: Connection::open_in_memory()?,
+        };
+        cache.init()?;
+        Ok(cache)
+    }
+
     /// Open (creating if needed) the cache database and ensure the schema.
     pub fn open() -> Result<Self> {
         let path = config::cache_path()?;

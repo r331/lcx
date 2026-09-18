@@ -5,6 +5,7 @@ mod config;
 mod lang;
 mod render;
 mod solution;
+mod sets;
 mod tui;
 
 use anyhow::Result;
@@ -47,6 +48,35 @@ enum Command {
     Cache(CacheArgs),
     /// View or change configuration.
     Config(ConfigArgs),
+    /// Manage curated and custom problem sets.
+    Sets(SetsArgs),
+}
+
+#[derive(Debug, Args)]
+struct SetsArgs {
+    #[command(subcommand)]
+    action: SetsAction,
+}
+
+#[derive(Debug, Subcommand)]
+enum SetsAction {
+    /// List available sets.
+    List,
+    /// Create an empty custom or company set.
+    Create { name: String },
+    /// Import lines of slug,category or LeetCode problem URLs.
+    Import { name: String, file: std::path::PathBuf },
+    /// Add a LeetCode problem slug to a custom set.
+    Add {
+        name: String,
+        slug: String,
+        #[arg(long, default_value = "Other")]
+        category: String,
+    },
+    /// Remove a problem from a custom set.
+    Remove { name: String, slug: String },
+    /// Delete a custom set.
+    Delete { name: String },
 }
 
 #[derive(Debug, Args)]
@@ -181,6 +211,27 @@ async fn run() -> Result<()> {
         Command::Config(a) => match a.action {
             Some(ConfigAction::Set { key, value }) => commands::config_cmd::set(&key, &value),
             None => commands::config_cmd::show(),
+        },
+        Command::Sets(a) => match a.action {
+            SetsAction::List => {
+                for set in sets::all()? {
+                    println!("{} ({} problems)", set.name, set.entries.len());
+                }
+                Ok(())
+            }
+            SetsAction::Create { name } => sets::create(&name),
+            SetsAction::Import { name, file } => {
+                let count = sets::import_file(&name, &file)?;
+                println!("Imported {count} problems into {name}.");
+                Ok(())
+            }
+            SetsAction::Add {
+                name,
+                slug,
+                category,
+            } => sets::add(&name, &slug, &category),
+            SetsAction::Remove { name, slug } => sets::remove(&name, &slug),
+            SetsAction::Delete { name } => sets::delete(&name),
         },
     }
 }

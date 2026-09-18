@@ -2,13 +2,15 @@
 //!
 //! Layout:
 //! - top-left: the action **menu** (settings + quit)
+//! - middle-left: curated and custom **problem sets**
 //! - bottom-left: the user's **profile** (solved counts by difficulty)
 //! - right: the **search page** (type to filter the cached problem list, open a
 //!   problem in the solve view)
 //!
-//! `Tab` moves focus between the menu and the search page.
+//! `Tab` moves focus between the menu, sets, and search page.
 
 use std::time::Duration;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -25,6 +27,7 @@ use crate::client::models::{DifficultyStat, ProblemSummary, ProfileStats};
 use crate::client::LeetCodeClient;
 use crate::config::Config;
 use crate::lang;
+use crate::sets::{self, ProblemSet};
 
 /// Result of a background startup fetch, delivered to the event loop so the UI
 /// can paint immediately instead of blocking on the network.
@@ -37,6 +40,7 @@ enum LoadMsg {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Menu,
+    Sets,
     Search,
 }
 
@@ -83,6 +87,11 @@ struct App {
     search: String,
     results: Vec<ProblemSummary>,
     list_state: ListState,
+    sets: Vec<ProblemSet>,
+    set_state: ListState,
+    set_category_mode: bool,
+    active_set: Option<usize>,
+    active_category: Option<String>,
     /// Today's daily challenge, pinned to the top of results when the search
     /// box is empty. Loaded once at startup.
     daily: Option<ProblemSummary>,
@@ -101,17 +110,24 @@ struct App {
 }
 
 impl App {
-    fn new(cache: Cache) -> Self {
+    fn new(cache: Cache) -> Result<Self> {
+        let mut set_state = ListState::default();
+        set_state.select(Some(0));
         let mut app = Self {
             cache,
             search: String::new(),
             results: Vec::new(),
             list_state: ListState::default(),
+            sets: sets::all()?,
+            set_state,
+            set_category_mode: false,
+            active_set: None,
+            active_category: None,
             daily: None,
             menu_selected: 0,
             focus: Focus::Search,
             profile: Profile::Loading,
-            status: "Type to search \u{2022} <Tab> switches to the menu.".to_string(),
+            status: "Type to search; <Tab> cycles Menu, Problem Sets, and Search.".to_string(),
             confirm: None,
             lang_state: None,
             open_login: false,
@@ -119,7 +135,7 @@ impl App {
             quit: false,
         };
         app.refilter();
-        app
+        Ok(app)
     }
 
     fn menu_item(&self) -> MenuItem {
@@ -128,6 +144,52 @@ impl App {
 
     fn refilter(&mut self) {
         let is_empty = self.search.trim().is_empty();
+        if let Some(set_index) = self.active_set {
+            let set = &self.sets[set_index];
+            let cached: HashMap<String, ProblemSummary> = self
+                .cache
+                .query(&ListFilter::default())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| (p.slug.clone(), p))
+                .collect();
+            let query = self.search.trim().to_lowercase();
+            self.results = set
+                .entries
+                .iter()
+                .filter(|entry| {
+                    self.active_category
+                        .as_ref()
+                        .is_none_or(|category| &entry.category == category)
+                })
+                .filter_map(|entry| {
+                    let problem = cached.get(&entry.slug).cloned().unwrap_or_else(|| {
+                        ProblemSummary {
+                            question_id: 0,
+                            frontend_id: String::new(),
+                            title: if entry.title.is_empty() {
+                                entry.slug.clone()
+                            } else {
+                                entry.title.clone()
+                            },
+                            slug: entry.slug.clone(),
+                            difficulty: entry.difficulty.clone(),
+                            paid_only: false,
+                            ac_rate: 0.0,
+                            status: None,
+                            tags: Vec::new(),
+                        }
+                    });
+                    (query.is_empty()
+                        || problem.title.to_lowercase().contains(&query)
+                        || problem.slug.contains(&query)
+                        || entry.category.to_lowercase().contains(&query))
+                    .then_some(problem)
+                })
+                .collect();
+            self.list_state.select((!self.results.is_empty()).then_some(0));
+            return;
+        }
         let filter = ListFilter {
             difficulty: None,
             tag: None,
@@ -159,7 +221,74 @@ impl App {
     /// Whether the given slug is the daily challenge currently pinned to the top
     /// (only pinned while the search box is empty).
     fn is_daily(&self, slug: &str) -> bool {
-        self.search.trim().is_empty() && self.daily.as_ref().is_some_and(|d| d.slug == slug)
+        self.active_set.is_none()
+            && self.search.trim().is_empty()
+            && self.daily.as_ref().is_some_and(|d| d.slug == slug)
+    }
+
+    fn categories(&self) -> Vec<String> {
+        let Some(index) = self.active_set else { return Vec::new() };
+        let mut categories = Vec::new();
+        for entry in &self.sets[index].entries {
+            if !entry.category.is_empty() && !categories.contains(&entry.category) {
+                categories.push(entry.category.clone());
+            }
+        }
+        categories
+    }
+
+    fn set_items(&self) -> Vec<String> {
+        if self.set_category_mode {
+            let mut items = vec!["← Choose set".to_string(), "All categories".to_string()];
+            items.extend(self.categories());
+            items
+        } else {
+            let mut items = vec!["All problems".to_string()];
+            items.extend(self.sets.iter().map(|s| s.name.clone()));
+            items
+        }
+    }
+
+    fn move_set(&mut self, delta: i32) {
+        let len = self.set_items().len() as i32;
+        let cur = self.set_state.selected().unwrap_or(0) as i32;
+        self.set_state.select(Some((cur + delta).rem_euclid(len) as usize));
+    }
+
+    fn activate_set(&mut self) {
+        let selected = self.set_state.selected().unwrap_or(0);
+        if self.set_category_mode {
+            if selected == 0 {
+                self.set_category_mode = false;
+                self.set_state.select(Some(self.active_set.map_or(0, |i| i + 1)));
+                return;
+            }
+            self.active_category = if selected == 1 {
+                None
+            } else {
+                self.categories().get(selected - 2).cloned()
+            };
+        } else if selected == 0 {
+            self.active_set = None;
+            self.active_category = None;
+        } else {
+            self.active_set = Some(selected - 1);
+            self.active_category = None;
+            self.set_category_mode = true;
+            self.set_state.select(Some(1));
+        }
+        self.refilter();
+        let label = self.active_set.map_or("All problems", |i| &self.sets[i].name);
+        self.status = format!("Showing {label} ({} problems).", self.results.len());
+    }
+
+    fn active_category_for(&self, slug: &str) -> Option<&str> {
+        let index = self.active_set?;
+        self.sets[index]
+            .entries
+            .iter()
+            .find(|entry| entry.slug == slug)
+            .map(|entry| entry.category.as_str())
     }
 
     /// Pin a fetched daily challenge to the top of the list. Best-effort: called
@@ -346,7 +475,7 @@ impl App {
 
 /// Run the unified main screen until the user quits.
 pub fn run(terminal: &mut Terminal<Backend>, cfg: &mut Config, cache: Cache) -> Result<()> {
-    let mut app = App::new(cache);
+    let mut app = App::new(cache)?;
 
     // Load the profile and daily challenge in the background so the cached
     // problem list paints instantly instead of waiting on two network calls.
@@ -488,7 +617,8 @@ pub fn run(terminal: &mut Terminal<Backend>, cfg: &mut Config, cache: Cache) -> 
             }
             KeyCode::Tab => {
                 app.focus = match app.focus {
-                    Focus::Menu => Focus::Search,
+                    Focus::Menu => Focus::Sets,
+                    Focus::Sets => Focus::Search,
                     Focus::Search => Focus::Menu,
                 };
                 continue;
@@ -509,6 +639,16 @@ pub fn run(terminal: &mut Terminal<Backend>, cfg: &mut Config, cache: Cache) -> 
                 KeyCode::Up => app.move_menu(-1),
                 KeyCode::Down => app.move_menu(1),
                 KeyCode::Enter => app.activate_menu(cfg),
+                _ => {}
+            },
+            Focus::Sets => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => app.move_set(-1),
+                KeyCode::Down | KeyCode::Char('j') => app.move_set(1),
+                KeyCode::Enter => app.activate_set(),
+                KeyCode::Backspace if app.set_category_mode => {
+                    app.set_category_mode = false;
+                    app.set_state.select(Some(app.active_set.map_or(0, |i| i + 1)));
+                }
                 _ => {}
             },
             Focus::Search => match key.code {
@@ -553,7 +693,7 @@ fn ui(f: &mut Frame, app: &mut App, cfg: &Config) {
     ]);
     f.render_widget(Paragraph::new(title), root[0]);
 
-    // Left sidebar (menu + profile) and right search page.
+    // Left sidebar (menu, sets, profile) and right search page.
     let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(40), Constraint::Min(30)])
@@ -561,7 +701,11 @@ fn ui(f: &mut Frame, app: &mut App, cfg: &Config) {
 
     let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(6)])
+        .constraints([
+            Constraint::Length(7),
+            Constraint::Length(5),
+            Constraint::Min(7),
+        ])
         .split(body[0]);
 
     // Menu (top-left).
@@ -578,8 +722,24 @@ fn ui(f: &mut Frame, app: &mut App, cfg: &Config) {
         .highlight_symbol(if menu_focused { "> " } else { "  " });
     f.render_stateful_widget(menu, left[0], &mut menu_state);
 
+    // Problem sets (middle-left). Enter a set to see its categories.
+    let sets_focused = app.focus == Focus::Sets;
+    let set_title = if app.set_category_mode {
+        app.active_set.map_or(" Problem Sets ".to_string(), |i| {
+            format!(" {} categories ", app.sets[i].name)
+        })
+    } else {
+        " Problem Sets ".to_string()
+    };
+    let set_items: Vec<ListItem> = app.set_items().into_iter().map(ListItem::new).collect();
+    let set_list = List::new(set_items)
+        .block(pane_block(&set_title, sets_focused))
+        .highlight_style(highlight(sets_focused))
+        .highlight_symbol(if sets_focused { "> " } else { "  " });
+    f.render_stateful_widget(set_list, left[1], &mut app.set_state);
+
     // Profile (bottom-left).
-    f.render_widget(profile_widget(&app.profile, left[1]), left[1]);
+    f.render_widget(profile_widget(&app.profile, left[2]), left[2]);
 
     // Search page (right): search box + results.
     let search_focused = app.focus == Focus::Search;
@@ -596,10 +756,37 @@ fn ui(f: &mut Frame, app: &mut App, cfg: &Config) {
     let list_items: Vec<ListItem> = app
         .results
         .iter()
-        .map(|p| ListItem::new(problem_line(p, app.is_daily(&p.slug))))
+        .map(|p| {
+            ListItem::new(problem_line(
+                p,
+                app.is_daily(&p.slug),
+                app.active_category_for(&p.slug),
+            ))
+        })
         .collect();
-    let total = app.cache.count().unwrap_or(0);
-    let list_title = format!(" Problems ({} / {total}) ", app.results.len());
+    let list_title = if let Some(index) = app.active_set {
+        let category = app
+            .active_category
+            .as_ref()
+            .map_or(String::new(), |s| format!(" / {s}"));
+        let total = app.active_category.as_ref().map_or(app.sets[index].entries.len(), |s| {
+            app.sets[index]
+                .entries
+                .iter()
+                .filter(|entry| &entry.category == s)
+                .count()
+        });
+        format!(
+            " {}{} ({} / {}) ",
+            app.sets[index].name,
+            category,
+            app.results.len(),
+            total
+        )
+    } else {
+        let total = app.cache.count().unwrap_or(0);
+        format!(" Problems ({} / {total}) ", app.results.len())
+    };
     let list = List::new(list_items)
         .block(pane_block(&list_title, search_focused))
         .highlight_style(highlight(search_focused))
@@ -629,11 +816,13 @@ fn profile_widget(profile: &Profile, area: Rect) -> Paragraph<'static> {
         Profile::Unavailable(msg) => Paragraph::new(msg.clone())
             .block(block)
             .wrap(Wrap { trim: true }),
-        Profile::Ready(stats) => Paragraph::new(profile_lines(stats, area.width)).block(block),
+        Profile::Ready(stats) => {
+            Paragraph::new(profile_lines(stats, area.width, area.height)).block(block)
+        }
     }
 }
 
-fn profile_lines(stats: &ProfileStats, width: u16) -> Vec<Line<'static>> {
+fn profile_lines(stats: &ProfileStats, width: u16, height: u16) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(vec![
             Span::raw("Signed in as "),
@@ -644,12 +833,19 @@ fn profile_lines(stats: &ProfileStats, width: u16) -> Vec<Line<'static>> {
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::raw(""),
+    ];
+    if height > 8 {
+        lines.push(Line::raw(""));
+    }
+    lines.extend([
         stat_line("Total ", &stats.total, Color::White, width),
         stat_line("Easy  ", &stats.easy, Color::Green, width),
         stat_line("Medium", &stats.medium, Color::Yellow, width),
         stat_line("Hard  ", &stats.hard, Color::Red, width),
-    ];
+    ]);
+    if height <= 8 {
+        return lines;
+    }
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         format!(
@@ -688,7 +884,7 @@ fn bar(pct: f64, cells: usize) -> String {
     )
 }
 
-fn problem_line(p: &ProblemSummary, is_daily: bool) -> Line<'static> {
+fn problem_line(p: &ProblemSummary, is_daily: bool, category: Option<&str>) -> Line<'static> {
     let status = match p.status.as_deref() {
         Some("ac") => Span::styled("\u{2714} ", Style::default().fg(Color::Green)),
         Some("notac") => Span::styled("\u{2717} ", Style::default().fg(Color::Yellow)),
@@ -715,6 +911,12 @@ fn problem_line(p: &ProblemSummary, is_daily: bool) -> Line<'static> {
             Style::default()
                 .fg(Color::Rgb(255, 161, 22))
                 .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if let Some(category) = category.filter(|s| !s.is_empty()) {
+        spans.push(Span::styled(
+            format!("  [{category}]"),
+            Style::default().fg(Color::Cyan),
         ));
     }
     Line::from(spans)
@@ -779,4 +981,49 @@ fn centered_rect(pct_x: u16, pct_y: u16, area: Rect) -> Rect {
             Constraint::Percentage((100 - pct_x) / 2),
         ])
         .split(vert[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ui, App};
+    use crate::cache::Cache;
+    use crate::config::Config;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn selecting_neetcode_and_category_filters_problem_list() {
+        let mut app = App::new(Cache::open_in_memory().unwrap()).unwrap();
+        app.set_state.select(Some(1));
+        app.activate_set();
+        assert_eq!(app.results.len(), 150);
+        assert!(app.set_category_mode);
+        let two_pointers = app
+            .set_items()
+            .iter()
+            .position(|label| label == "Two Pointers")
+            .unwrap();
+        app.set_state.select(Some(two_pointers));
+        app.activate_set();
+        assert_eq!(app.results.len(), 5);
+        assert!(app.results.iter().all(|problem| {
+            app.active_category_for(&problem.slug) == Some("Two Pointers")
+        }));
+    }
+
+    #[test]
+    fn dashboard_renders_all_three_left_tiles() {
+        let mut app = App::new(Cache::open_in_memory().unwrap()).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| ui(frame, &mut app, &Config::default())).unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Menu"));
+        assert!(screen.contains("Problem Sets"));
+        assert!(screen.contains("Profile"));
+        assert!(screen.contains("NeetCode 150"));
+    }
 }
