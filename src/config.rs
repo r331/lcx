@@ -12,6 +12,8 @@ pub struct Config {
     pub session: Option<String>,
     /// CSRF token cookie (`csrftoken`).
     pub csrf_token: Option<String>,
+    /// Optional Cloudflare challenge clearance cookie (`cf_clearance`).
+    pub cf_clearance: Option<String>,
     /// Default programming language slug (e.g. `rust`, `python3`, `cpp`).
     pub lang: String,
     /// Editor command used to open solution files. Falls back to `$EDITOR`.
@@ -25,6 +27,7 @@ impl Default for Config {
         Self {
             session: None,
             csrf_token: None,
+            cf_clearance: None,
             lang: "python3".to_string(),
             editor: None,
             workspace_dir: default_workspace_dir(),

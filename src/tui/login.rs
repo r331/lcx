@@ -43,19 +43,28 @@ pub enum LoginOutcome {
 enum Field {
     Session,
     Csrf,
+    Clearance,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct BrowserCookies {
+    session: String,
+    csrf: String,
+    clearance: Option<String>,
 }
 
 struct LoginApp {
     base: Config,
     session: String,
     csrf: String,
+    clearance: String,
     field: Field,
     status: String,
     done: Option<LoginOutcome>,
     /// While true, the modal keeps auto-importing browser cookies on a timer.
     polling: bool,
-    /// Cookie pairs already tried, to avoid re-verifying them on every tick.
-    tried_imports: Vec<(String, String)>,
+    /// Cookie sets already tried, to avoid re-verifying them on every tick.
+    tried_imports: Vec<BrowserCookies>,
     /// Whether cancelling (Esc) quits the app (startup) vs. returns (re-login).
     cancel_quits: bool,
 }
@@ -66,6 +75,7 @@ impl LoginApp {
             base: cfg.clone(),
             session: cfg.session.clone().unwrap_or_default(),
             csrf: cfg.csrf_token.clone().unwrap_or_default(),
+            clearance: cfg.cf_clearance.clone().unwrap_or_default(),
             field: Field::Session,
             status: "Auto-detecting browser login... (<F3> to open login page, or type to enter manually)".to_string(),
             done: None,
@@ -82,14 +92,15 @@ impl LoginApp {
             return;
         }
         match import_cookies() {
-            Ok(pairs) => {
-                for pair in pairs {
-                    if self.tried_imports.contains(&pair) {
+            Ok(candidates) => {
+                for cookies in candidates {
+                    if self.tried_imports.contains(&cookies) {
                         continue;
                     }
-                    self.tried_imports.push(pair.clone());
-                    self.session = pair.0;
-                    self.csrf = pair.1;
+                    self.tried_imports.push(cookies.clone());
+                    self.session = cookies.session;
+                    self.csrf = cookies.csrf;
+                    self.clearance = cookies.clearance.unwrap_or_default();
                     self.status = "Detected browser cookies, verifying...".to_string();
                     self.submit();
                     if self.done.is_some() {
@@ -131,13 +142,15 @@ impl LoginApp {
         match self.field {
             Field::Session => &mut self.session,
             Field::Csrf => &mut self.csrf,
+            Field::Clearance => &mut self.clearance,
         }
     }
 
     fn toggle_field(&mut self) {
         self.field = match self.field {
             Field::Session => Field::Csrf,
-            Field::Csrf => Field::Session,
+            Field::Csrf => Field::Clearance,
+            Field::Clearance => Field::Session,
         };
     }
 
@@ -153,6 +166,7 @@ impl LoginApp {
         let mut cfg = self.base.clone();
         cfg.session = Some(session);
         cfg.csrf_token = Some(csrf);
+        cfg.cf_clearance = Some(self.clearance.trim().to_string()).filter(|s| !s.is_empty());
 
         let client = match LeetCodeClient::from_config(&cfg) {
             Ok(c) => c,
@@ -197,7 +211,7 @@ impl LoginApp {
 /// per-browser errors) so we can surface *why* detection failed. The common
 /// culprit on Windows is Chrome/Edge/Brave "app-bound" cookie encryption, which
 /// can only be decrypted when running as administrator.
-fn import_cookies() -> Result<Vec<(String, String)>> {
+fn import_cookies() -> Result<Vec<BrowserCookies>> {
     type Loader = fn(Option<Vec<String>>) -> rookie::Result<Vec<rookie::enums::Cookie>>;
     let domains = Some(vec!["leetcode.com".to_string()]);
     let loaders: [Loader; 6] = [
@@ -217,6 +231,7 @@ fn import_cookies() -> Result<Vec<(String, String)>> {
     for load in loaders {
         let mut session = None;
         let mut csrf = None;
+        let mut clearance = None;
         let cookies = match load(domains.clone()) {
             Ok(c) => c,
             Err(e) => {
@@ -234,13 +249,18 @@ fn import_cookies() -> Result<Vec<(String, String)>> {
             match c.name.as_str() {
                 "LEETCODE_SESSION" => session = Some(c.value),
                 "csrftoken" => csrf = Some(c.value),
+                "cf_clearance" => clearance = Some(c.value),
                 _ => {}
             }
         }
-        if let (Some(s), Some(c)) = (session, csrf) {
-            let pair = (s, c);
-            if !pairs.contains(&pair) {
-                pairs.push(pair);
+        if let (Some(session), Some(csrf)) = (session, csrf) {
+            let cookies = BrowserCookies {
+                session,
+                csrf,
+                clearance,
+            };
+            if !pairs.contains(&cookies) {
+                pairs.push(cookies);
             }
         }
     }
@@ -355,6 +375,7 @@ fn ui(f: &mut Frame, app: &LoginApp) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
+            Constraint::Length(3),
             Constraint::Length(1),
             Constraint::Min(0),
         ])
@@ -372,17 +393,25 @@ fn ui(f: &mut Frame, app: &LoginApp) {
         field_widget("csrftoken", &app.csrf, app.field == Field::Csrf),
         right[2],
     );
+    f.render_widget(
+        field_widget(
+            "cf_clearance (optional)",
+            &app.clearance,
+            app.field == Field::Clearance,
+        ),
+        right[3],
+    );
 
     let status = Paragraph::new(app.status.as_str())
         .block(Block::default().borders(Borders::ALL).title(" Status "));
-    f.render_widget(status, right[3]);
+    f.render_widget(status, right[4]);
 
     let state = if app.polling { "ON" } else { "OFF" };
     let esc = if app.cancel_quits { "quit" } else { "cancel" };
     let help = format!(
         "<F2> auto-detect [{state}]  <F3> open login page  <F4> browse offline  <Tab> switch field  <Enter> save  <Esc> {esc}"
     );
-    f.render_widget(Paragraph::new(super::help_line(&help)), right[4]);
+    f.render_widget(Paragraph::new(super::help_line(&help)), right[5]);
 }
 
 /// ASCII-art rendition of the LeetCode logo. Characters forming the chevron
@@ -469,8 +498,7 @@ fn field_widget<'a>(label: &'a str, value: &str, focused: bool) -> Paragraph<'a>
     Paragraph::new(shown).block(block)
 }
 
-/// Show the value length and a tail preview so the user can confirm a paste
-/// without exposing the full secret on screen.
+/// Show only the value length so credentials do not appear on screen.
 fn mask(value: &str, focused: bool) -> String {
     if value.is_empty() {
         return if focused {
@@ -480,14 +508,32 @@ fn mask(value: &str, focused: bool) -> String {
         };
     }
     let len = value.chars().count();
-    let tail: String = value
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
     let cursor = if focused { "\u{2588}" } else { "" };
-    format!("{} chars \u{2022} \u{2026}{tail}{cursor}", len)
+    format!("{len} chars{cursor}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mask, ui, LoginApp};
+    use crate::config::Config;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn login_shows_optional_clearance_without_exposing_cookie_value() {
+        let mut cfg = Config::default();
+        cfg.cf_clearance = Some("secret-example".to_string());
+        let app = LoginApp::new(&cfg, true);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| ui(frame, &app)).unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("cf_clearance"));
+        assert!(!screen.contains("secret-example"));
+        assert!(!mask("secret-example", true).contains("example"));
+    }
 }

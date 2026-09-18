@@ -35,11 +35,8 @@ impl LeetCodeClient {
         headers.insert(ORIGIN, HeaderValue::from_static(BASE_URL));
         headers.insert(REFERER, HeaderValue::from_str(&format!("{BASE_URL}/"))?);
 
-        if let (Some(session), Some(csrf)) = (&cfg.session, &cfg.csrf_token) {
-            let cookie = format!("LEETCODE_SESSION={session}; csrftoken={csrf}");
-            headers.insert(COOKIE, HeaderValue::from_str(&cookie)?);
-        } else if let Some(csrf) = &cfg.csrf_token {
-            headers.insert(COOKIE, HeaderValue::from_str(&format!("csrftoken={csrf}"))?);
+        if let Some(cookie) = cookie_header(cfg)? {
+            headers.insert(COOKIE, cookie);
         }
 
         let http = reqwest::Client::builder()
@@ -247,6 +244,43 @@ impl LeetCodeClient {
             bail!("judge request failed ({status}): {text}");
         }
         serde_json::from_str(&text).with_context(|| format!("parsing judge result: {text}"))
+    }
+}
+
+fn cookie_header(cfg: &Config) -> Result<Option<HeaderValue>> {
+    let mut cookies = Vec::new();
+    if let Some(session) = cfg.session.as_deref().filter(|value| !value.is_empty()) {
+        cookies.push(format!("LEETCODE_SESSION={session}"));
+    }
+    if let Some(csrf) = cfg.csrf_token.as_deref().filter(|value| !value.is_empty()) {
+        cookies.push(format!("csrftoken={csrf}"));
+    }
+    if let Some(clearance) = cfg.cf_clearance.as_deref().filter(|value| !value.is_empty()) {
+        cookies.push(format!("cf_clearance={clearance}"));
+    }
+    if cookies.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(HeaderValue::from_str(&cookies.join("; "))?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cookie_header;
+    use crate::config::Config;
+
+    #[test]
+    fn includes_optional_clearance_in_cookie_header() {
+        let mut cfg = Config::default();
+        cfg.session = Some("session-example".to_string());
+        cfg.csrf_token = Some("csrf-example".to_string());
+        cfg.cf_clearance = Some("clearance-example".to_string());
+        let cookie = cookie_header(&cfg).unwrap().unwrap();
+        assert_eq!(
+            cookie.to_str().unwrap(),
+            "LEETCODE_SESSION=session-example; csrftoken=csrf-example; cf_clearance=clearance-example"
+        );
     }
 }
 

@@ -87,6 +87,9 @@ struct LoginArgs {
     /// csrftoken cookie value.
     #[arg(long)]
     csrf: Option<String>,
+    /// Optional Cloudflare cf_clearance cookie value.
+    #[arg(long)]
+    cf_clearance: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -196,7 +199,7 @@ async fn run() -> Result<()> {
         return launch_tui();
     };
     match command {
-        Command::Login(a) => commands::auth::login(a.session, a.csrf).await,
+        Command::Login(a) => commands::auth::login(a.session, a.csrf, a.cf_clearance).await,
         Command::Whoami => commands::auth::whoami().await,
         Command::List(a) => {
             commands::list::run(a.difficulty, a.tag, a.status, a.query, a.limit).await

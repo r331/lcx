@@ -174,6 +174,7 @@ does.
 
 - **Easiest:** launch `lcx` and let the login modal **auto-detect** cookies from a
   browser you're already signed into (press `F3` to open the login page first).
+  The modal also imports `cf_clearance` when that browser has one.
   On **Windows**, Chrome/Edge/Brave encrypt cookies with app-bound encryption, so
   auto-detect can only read them if you run `lcx` as administrator — right-click
   PowerShell -> "Run as administrator" (or run `Start-Process powershell -Verb
@@ -184,9 +185,14 @@ does.
 ```bash
 lcx login --session "<LEETCODE_SESSION>" --csrf "<csrftoken>"
 # or just `lcx login` to be prompted
+# if Cloudflare clearance is needed after login:
+lcx login --cf-clearance "<cf_clearance>"
 ```
 
-Credentials are stored at `~/.config/lcx/config.toml` with `600` permissions.
+`cf_clearance` is optional. You can also enter it in the TUI login modal, or
+update only that cookie with `lcx login --cf-clearance "<value>"` when your
+session and CSRF cookies are already saved. Credentials are stored in the
+configuration file shown by `lcx config`, with `600` permissions on Unix.
 Verify with `lcx whoami`.
 
 ### Finding your session cookies
@@ -198,14 +204,14 @@ You only need this for manual login (the TUI can auto-detect cookies for you).
    - **Chrome / Edge / Brave:** `F12` (or `Ctrl+Shift+I`, `Cmd+Option+I` on macOS)
      → **Application** tab → **Storage** → **Cookies** → `https://leetcode.com`.
    - **Firefox:** `F12` → **Storage** tab → **Cookies** → `https://leetcode.com`.
-3. Find these two rows and copy each **Value**:
+3. Find the session and CSRF rows and copy each **Value**:
    - `LEETCODE_SESSION` — a long token (this is your session).
    - `csrftoken` — a shorter token.
+   - `cf_clearance` — optional Cloudflare clearance after a browser challenge.
 4. Pass them to `lcx login` as shown above.
 
-Treat these like a password: they grant access to your LeetCode account. They
-expire periodically, so if requests start failing, grab fresh values or run
-`lcx login` again.
+Treat these like passwords. They expire periodically, so if requests start
+failing, refresh them or run `lcx login` again.
 
 ### Advanced: work from the command line
 

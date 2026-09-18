@@ -18,6 +18,14 @@ pub fn show() -> Result<()> {
         "authenticated: {}",
         if cfg.is_authenticated() { "yes" } else { "no" }
     );
+    println!(
+        "cf_clearance:  {}",
+        if cfg.cf_clearance.as_deref().is_some_and(|s| !s.is_empty()) {
+            "saved"
+        } else {
+            "not set"
+        }
+    );
     Ok(())
 }
 

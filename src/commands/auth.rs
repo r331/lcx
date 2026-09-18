@@ -5,20 +5,29 @@ use crate::client::LeetCodeClient;
 use crate::config::{self, Config};
 
 /// Save session credentials. If either value is omitted, prompt for it.
-pub async fn login(session: Option<String>, csrf: Option<String>) -> Result<()> {
+pub async fn login(
+    session: Option<String>,
+    csrf: Option<String>,
+    cf_clearance: Option<String>,
+) -> Result<()> {
     let mut cfg = Config::load()?;
 
     let session = match session {
         Some(s) => s,
+        None if cf_clearance.is_some() && cfg.session.is_some() => cfg.session.clone().unwrap(),
         None => prompt("LEETCODE_SESSION: ")?,
     };
     let csrf = match csrf {
         Some(c) => c,
+        None if cf_clearance.is_some() && cfg.csrf_token.is_some() => cfg.csrf_token.clone().unwrap(),
         None => prompt("csrftoken: ")?,
     };
 
     cfg.session = Some(session.trim().to_string());
     cfg.csrf_token = Some(csrf.trim().to_string());
+    if let Some(clearance) = cf_clearance {
+        cfg.cf_clearance = Some(clearance.trim().to_string());
+    }
     cfg.save()?;
 
     let path = config::config_path()?;
