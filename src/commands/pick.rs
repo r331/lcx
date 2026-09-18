@@ -33,7 +33,7 @@ pub async fn run(key: &str, lang: Option<String>, open: bool) -> Result<()> {
         })?;
 
         solution::ensure_workspace(&cfg)?;
-        let contents = solution::render_file(&lang_slug, &snippet.code);
+        let contents = solution::render_file(&lang_slug, &snippet.code, &detail.content);
         std::fs::write(&path, contents)?;
         println!("Created {}", path.display());
     }

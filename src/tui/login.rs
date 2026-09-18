@@ -54,8 +54,8 @@ struct LoginApp {
     done: Option<LoginOutcome>,
     /// While true, the modal keeps auto-importing browser cookies on a timer.
     polling: bool,
-    /// Last cookie pair we auto-imported, to avoid re-verifying identical values.
-    last_import: Option<(String, String)>,
+    /// Cookie pairs already tried, to avoid re-verifying them on every tick.
+    tried_imports: Vec<(String, String)>,
     /// Whether cancelling (Esc) quits the app (startup) vs. returns (re-login).
     cancel_quits: bool,
 }
@@ -70,7 +70,7 @@ impl LoginApp {
             status: "Auto-detecting browser login... (<F3> to open login page, or type to enter manually)".to_string(),
             done: None,
             polling: true,
-            last_import: None,
+            tried_imports: Vec::new(),
             cancel_quits,
         }
     }
@@ -82,15 +82,20 @@ impl LoginApp {
             return;
         }
         match import_cookies() {
-            Ok(pair) => {
-                if self.last_import.as_ref() == Some(&pair) {
-                    return; // already handled these exact cookies
+            Ok(pairs) => {
+                for pair in pairs {
+                    if self.tried_imports.contains(&pair) {
+                        continue;
+                    }
+                    self.tried_imports.push(pair.clone());
+                    self.session = pair.0;
+                    self.csrf = pair.1;
+                    self.status = "Detected browser cookies, verifying...".to_string();
+                    self.submit();
+                    if self.done.is_some() {
+                        return;
+                    }
                 }
-                self.last_import = Some(pair.clone());
-                self.session = pair.0;
-                self.csrf = pair.1;
-                self.status = "Detected browser cookies, verifying...".to_string();
-                self.submit();
             }
             Err(e) => {
                 // Surface the reason (e.g. "not found, sign in first" or the
@@ -113,7 +118,7 @@ impl LoginApp {
     fn toggle_polling(&mut self) {
         self.polling = !self.polling;
         if self.polling {
-            self.last_import = None; // allow a fresh attempt
+            self.tried_imports.clear(); // allow a fresh attempt
             self.status = "Auto-detect enabled.".to_string();
             self.poll_tick();
         } else {
@@ -192,25 +197,26 @@ impl LoginApp {
 /// per-browser errors) so we can surface *why* detection failed. The common
 /// culprit on Windows is Chrome/Edge/Brave "app-bound" cookie encryption, which
 /// can only be decrypted when running as administrator.
-fn import_cookies() -> Result<(String, String)> {
+fn import_cookies() -> Result<Vec<(String, String)>> {
     type Loader = fn(Option<Vec<String>>) -> rookie::Result<Vec<rookie::enums::Cookie>>;
     let domains = Some(vec!["leetcode.com".to_string()]);
     let loaders: [Loader; 6] = [
-        rookie::firefox,
         rookie::chrome,
+        rookie::firefox,
         rookie::edge,
         rookie::brave,
         rookie::chromium,
         rookie::vivaldi,
     ];
 
-    let mut session = None;
-    let mut csrf = None;
+    let mut pairs = Vec::new();
     // Set when a browser was present but its cookies couldn't be decrypted
     // (e.g. app-bound encryption on Windows without admin rights).
     let mut blocked = false;
 
     for load in loaders {
+        let mut session = None;
+        let mut csrf = None;
         let cookies = match load(domains.clone()) {
             Ok(c) => c,
             Err(e) => {
@@ -231,23 +237,28 @@ fn import_cookies() -> Result<(String, String)> {
                 _ => {}
             }
         }
-        if session.is_some() && csrf.is_some() {
-            break;
+        if let (Some(s), Some(c)) = (session, csrf) {
+            let pair = (s, c);
+            if !pairs.contains(&pair) {
+                pairs.push(pair);
+            }
         }
     }
 
-    match (session, csrf) {
-        (Some(s), Some(c)) => Ok((s, c)),
-        _ if blocked => Err(anyhow!(
+    if !pairs.is_empty() {
+        Ok(pairs)
+    } else if blocked {
+        Err(anyhow!(
             "Found a Chromium browser but couldn't read its cookies. On Windows, \
              Chrome/Edge/Brave use app-bound encryption and can only be read when \
              lcx runs as administrator. Use Firefox, run lcx as admin, or enter \
              cookies manually (<Tab> to a field and type)."
-        )),
-        _ => Err(anyhow!(
+        ))
+    } else {
+        Err(anyhow!(
             "LeetCode cookies not found. Open the login page (<F3>) and sign in first, \
              or enter cookies manually."
-        )),
+        ))
     }
 }
 

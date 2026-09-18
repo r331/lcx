@@ -77,7 +77,7 @@ pub fn prepare(
             )
         })?;
         solution::ensure_workspace(cfg)?;
-        let contents = solution::render_file(&lang_slug, &snippet.code);
+        let contents = solution::render_file(&lang_slug, &snippet.code, &detail.content);
         std::fs::write(&path, contents)?;
     }
 
@@ -139,7 +139,7 @@ impl SolveApp {
         let Some(snippet) = self.detail.snippet_for(&self.lang_slug) else {
             return format!("No starter code available for '{}'.", self.lang_slug);
         };
-        let contents = solution::render_file(&self.lang_slug, &snippet.code);
+        let contents = solution::render_file(&self.lang_slug, &snippet.code, &self.detail.content);
         if let Err(e) = std::fs::write(&self.path, &contents) {
             return format!("Start over failed: {e}");
         }

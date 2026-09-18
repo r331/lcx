@@ -21,12 +21,26 @@ pub fn solution_path(cfg: &Config, frontend_id: &str, slug: &str, lang_slug: &st
 /// Build the file contents: a short lcx banner followed by the code. The
 /// problem/language are identified from the file name (`{id}.{slug}.{ext}`) by
 /// `test`/`submit`, so no metadata comment is embedded.
-pub fn render_file(lang_slug: &str, code: &str) -> String {
+pub fn render_file(lang_slug: &str, code: &str, description_html: &str) -> String {
     let cp = lang::comment_prefix(lang_slug);
-    format!(
+    let mut contents = format!(
         "{cp} Solved with LCX\n{cp} An open-source CLI for LeetCode.\n{cp} https://github.com/HarryYCChou/lcx\n\n{}\n",
         clean_snippet(code),
-    )
+    );
+    if lang_slug == "python3" && !description_html.trim().is_empty() {
+        contents.push_str("\n# --- Problem description ---\n");
+        let description = crate::render::html_to_text(description_html);
+        for line in description.trim_end().lines() {
+            if line.trim().is_empty() {
+                contents.push_str("#\n");
+            } else {
+                contents.push_str("# ");
+                contents.push_str(line);
+                contents.push('\n');
+            }
+        }
+    }
+    contents
 }
 
 /// Normalize a LeetCode starter snippet: strip trailing whitespace from every
@@ -127,7 +141,7 @@ pub fn open_in_editor(cfg: &Config, path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::clean_snippet;
+    use super::{clean_snippet, render_file};
 
     #[test]
     fn strips_trailing_whitespace_and_normalizes_endings() {
@@ -140,5 +154,24 @@ mod tests {
             "class MinStack {\n    void pop() {\n\n    }\n\n    int top() {\n\n    }\n};"
         );
         assert!(!cleaned.lines().any(|l| l != l.trim_end()));
+    }
+
+    #[test]
+    fn python_file_ends_with_full_commented_description() {
+        let file = render_file(
+            "python3",
+            "class Solution:\n    pass",
+            "<p>Swap adjacent nodes.</p><p><strong>Example:</strong> 1 → 2 becomes 2 → 1.</p>",
+        );
+        assert!(file.contains("class Solution:\n    pass\n\n# --- Problem description ---\n"));
+        assert!(file.contains("# Swap adjacent nodes."));
+        assert!(file.contains("Example:"));
+        assert!(file
+            .lines()
+            .skip_while(|line| *line != "# --- Problem description ---")
+            .skip(1)
+            .all(|line| line.starts_with('#')));
+        assert!(!render_file("rust", "fn main() {}", "<p>Description</p>")
+            .contains("Problem description"));
     }
 }
