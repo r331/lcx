@@ -13,41 +13,6 @@ subcommands for scripting and one-offs. The core (HTTP client, cache, config) is
 deliberately separated from the presentation layer, so the CLI and TUI share the
 same LeetCode logic.
 
-## Support
-
-Enjoying `lcx`? A little support goes a long way toward keeping it maintained:
-
-<p align="center">
-<a href="https://github.com/sponsors/HarryYCChou"><img height="45" src="https://img.shields.io/badge/GitHub%20Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub Sponsors"></a>
-<a href="https://ko-fi.com/HarryYCChou"><img height="45" src="https://storage.ko-fi.com/cdn/kofi5.png?v=6" alt="Support me on Ko-fi"></a>
-<a href="https://www.buymeacoffee.com/HarryYCChou"><img height="45" src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee"></a>
-</p>
-
-### Crypto
-
-Prefer crypto? Scan a QR code below, or expand "Copy wallet addresses" to copy one.
-
-<div align="center">
-<table>
-<tr>
-<td align="center"><b>BTC</b><br>Bitcoin<br><img width="140" src="docs/crypto/btc_qr_with_icon.png" alt="BTC QR"></td>
-<td align="center"><b>ETH</b><br>Ethereum (ERC-20)<br><img width="140" src="docs/crypto/eth_qr_with_icon.png" alt="ETH QR"></td>
-<td align="center"><b>SOL</b><br>Solana<br><img width="140" src="docs/crypto/sol_qr_with_icon.png" alt="SOL QR"></td>
-<td align="center"><b>USDT</b><br>Tron (TRC-20)<br><img width="140" src="docs/crypto/usdt_qr_with_icon.png" alt="USDT QR"></td>
-</tr>
-</table>
-</div>
-
-<details>
-<summary>Copy wallet addresses</summary>
-
-- **BTC** (Bitcoin): `bc1qdj0jpd7kyx0zy33vaj4nqy86ljswhrda6n04kf`
-- **ETH** (Ethereum / ERC-20): `0x612a806a87e0d99f2a7492dbb875cca6f056fa57`
-- **SOL** (Solana): `ELcq1ibh4zcmueHF4MocpntZ3atcdfkei2gW9ybvmCRx`
-- **USDT** (Tron / TRC-20): `TS1wPw1MR5PXvfC4R62jMgVzn5FYMTDnB4`
-
-</details>
-
 ## Demo
 
 ![lcx demo](docs/lcx.gif)
@@ -178,7 +143,7 @@ lcx
 
 ### Problem sets
 
-The dashboard has a **Problem Sets** tile between Menu and Profile. Press `Tab` to focus it, select **NeetCode 150**, then choose **All categories** or a category such as **Two Pointers** or **Stack**. The problem list shows each problem's difficulty and NeetCode category. The set is bundled for offline browsing; problem status and IDs come from the local LeetCode cache when available. Run `lcx cache --update` to refresh that cache.
+The dashboard has a **Problem Sets** tile between Menu and Profile. Press `Tab` to focus it, select **NeetCode 150** or **Amazon**, then choose **All categories** or a category such as **Two Pointers** or **Stack**. The problem list shows each problem's difficulty and category. Both sets are bundled for offline browsing; problem status and IDs come from the local LeetCode cache when available. Run `lcx cache --update` to refresh that cache.
 
 Create a company or personal set with the CLI. It appears in the tile the next time you launch `lcx`:
 
@@ -200,7 +165,7 @@ valid-parentheses,Stack
 lcx sets import "My Company" company-problems.txt
 ```
 
-Custom sets live in the app's `sets.json` file alongside its config. The bundled NeetCode 150 data is sourced from [NeetCode's public problem metadata](https://github.com/neetcode-gh/leetcode/blob/main/.problemSiteData.json).
+Custom sets live in the app's `sets.json` file alongside its config. NeetCode 150 is sourced from [NeetCode's public problem metadata](https://github.com/neetcode-gh/leetcode/blob/main/.problemSiteData.json). Amazon is a community [three-month company-tag snapshot](https://github.com/liquidslr/leetcode-company-wise-problems/blob/03850eb5d16892514491cf1381c32ec0330a2719/Amazon/2.%20Three%20Months.csv) from August 16, 2026; categories use NeetCode patterns where available and LeetCode topics for the rest.
 
 ### Authentication
 
@@ -265,10 +230,10 @@ lcx daily --pick
 lcx config set editor "code -w"
 ```
 
-Solution files are written to the workspace directory as `{id}.{slug}.{ext}` with
-a metadata header comment so `test`/`submit` can identify the problem
-automatically. Config lives at `~/.config/lcx/config.toml`, the cache at
-`~/.config/lcx/cache.sqlite`, and solutions default to `~/lcx/`.
+Solution files are written to the workspace directory as `{id}.{slug}.{ext}`;
+`test` and `submit` identify the problem from the filename. Config and cache
+live in the app's configuration directory (run `lcx config` to see its path),
+and solutions default to `~/lcx/`.
 
 ### Supported languages
 

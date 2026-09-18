@@ -18,15 +18,11 @@ pub fn solution_path(cfg: &Config, frontend_id: &str, slug: &str, lang_slug: &st
         .join(format!("{frontend_id}.{slug}.{ext}"))
 }
 
-/// Build the file contents: a short lcx banner followed by the code. The
-/// problem/language are identified from the file name (`{id}.{slug}.{ext}`) by
-/// `test`/`submit`, so no metadata comment is embedded.
+/// Build the solution file from starter code, appending the problem description
+/// as comments for Python. `test`/`submit` identify the problem from the file
+/// name (`{id}.{slug}.{ext}`).
 pub fn render_file(lang_slug: &str, code: &str, description_html: &str) -> String {
-    let cp = lang::comment_prefix(lang_slug);
-    let mut contents = format!(
-        "{cp} Solved with LCX\n{cp} An open-source CLI for LeetCode.\n{cp} https://github.com/HarryYCChou/lcx\n\n{}\n",
-        clean_snippet(code),
-    );
+    let mut contents = format!("{}\n", clean_snippet(code));
     if lang_slug == "python3" && !description_html.trim().is_empty() {
         contents.push_str("\n# --- Problem description ---\n");
         let description = crate::render::html_to_text(description_html);
@@ -164,6 +160,8 @@ mod tests {
             "<p>Swap adjacent nodes.</p><p><strong>Example:</strong> 1 → 2 becomes 2 → 1.</p>",
         );
         assert!(file.contains("class Solution:\n    pass\n\n# --- Problem description ---\n"));
+        assert!(file.starts_with("class Solution:"));
+        assert!(!file.contains("Solved with LCX"));
         assert!(file.contains("# Swap adjacent nodes."));
         assert!(file.contains("Example:"));
         assert!(file

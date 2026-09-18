@@ -84,12 +84,3 @@ pub fn slug_from_extension(ext: &str) -> Option<&'static str> {
         _ => None,
     }
 }
-
-/// Comment prefix used to embed metadata markers in generated files.
-pub fn comment_prefix(lang_slug: &str) -> &'static str {
-    match lang_slug {
-        "mysql" => "--",
-        "python" | "python3" | "ruby" | "elixir" | "bash" => "#",
-        _ => "//",
-    }
-}

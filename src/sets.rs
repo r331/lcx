@@ -1,4 +1,4 @@
-//! Curated problem sets. The built-in NeetCode list is available offline;
+//! Curated problem sets. Built-in lists are available offline;
 //! user sets are stored separately from the LeetCode problem cache.
 
 use std::path::PathBuf;
@@ -31,9 +31,13 @@ fn path() -> Result<PathBuf> {
     Ok(config::project_dir()?.join("sets.json"))
 }
 
-pub fn builtin() -> ProblemSet {
-    serde_json::from_str(include_str!("../data/neetcode150.json"))
-        .expect("bundled NeetCode 150 data is valid")
+pub fn builtins() -> Vec<ProblemSet> {
+    vec![
+        serde_json::from_str(include_str!("../data/neetcode150.json"))
+            .expect("bundled NeetCode 150 data is valid"),
+        serde_json::from_str(include_str!("../data/amazon.json"))
+            .expect("bundled Amazon data is valid"),
+    ]
 }
 
 pub fn load_custom() -> Result<Vec<ProblemSet>> {
@@ -59,7 +63,9 @@ fn validate_name(name: &str, sets: &[ProblemSet]) -> Result<String> {
     if name.is_empty() {
         bail!("set name cannot be empty");
     }
-    if name.eq_ignore_ascii_case("All problems") || name.eq_ignore_ascii_case("NeetCode 150") {
+    if name.eq_ignore_ascii_case("All problems")
+        || builtins().iter().any(|set| set.name.eq_ignore_ascii_case(name))
+    {
         bail!("'{name}' is a reserved set name");
     }
     if sets.iter().any(|s| s.name.eq_ignore_ascii_case(name)) {
@@ -87,8 +93,11 @@ fn normalize_slug(raw: &str) -> Result<String> {
 }
 
 pub fn all() -> Result<Vec<ProblemSet>> {
-    let mut sets = vec![builtin()];
-    sets.extend(load_custom()?);
+    let mut sets = builtins();
+    let builtin_names: Vec<String> = sets.iter().map(|set| set.name.to_lowercase()).collect();
+    sets.extend(load_custom()?.into_iter().filter(|custom| {
+        !builtin_names.contains(&custom.name.to_lowercase())
+    }));
     Ok(sets)
 }
 
@@ -191,18 +200,28 @@ pub fn delete(set_name: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{builtin, parse_import};
+    use super::{builtins, parse_import};
     use std::collections::HashSet;
 
     #[test]
     fn neetcode_has_150_unique_problems_and_categories() {
-        let set = builtin();
+        let set = &builtins()[0];
         let slugs: HashSet<_> = set.entries.iter().map(|e| &e.slug).collect();
         assert_eq!(set.entries.len(), 150);
         assert_eq!(slugs.len(), 150);
         assert!(set.entries.iter().any(|e| e.category == "Two Pointers"));
         assert!(set.entries.iter().any(|e| e.category == "Stack"));
         assert!(set.entries.iter().all(|e| !e.difficulty.is_empty()));
+    }
+
+    #[test]
+    fn amazon_has_450_unique_problems_and_difficulties() {
+        let set = &builtins()[1];
+        let slugs: HashSet<_> = set.entries.iter().map(|e| &e.slug).collect();
+        assert_eq!(set.name, "Amazon");
+        assert_eq!(set.entries.len(), 450);
+        assert_eq!(slugs.len(), 450);
+        assert!(set.entries.iter().all(|e| !e.title.is_empty() && !e.difficulty.is_empty()));
     }
 
     #[test]
