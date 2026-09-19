@@ -5,24 +5,28 @@ pub mod models;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, COOKIE, ORIGIN, REFERER, USER_AGENT};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use wreq::header::{HeaderMap, HeaderValue, CONTENT_TYPE, COOKIE, ORIGIN, REFERER};
+use wreq_util::Emulation;
 
 use crate::config::Config;
 use graphql::*;
 use models::*;
 
 const BASE_URL: &str = "https://leetcode.com";
-const UA: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36";
 
 /// HTTP client wrapping the LeetCode GraphQL and judge endpoints. Contains no
 /// presentation logic so it can be reused by the TUI front-end. Cheap to clone
-/// (the inner reqwest client is reference-counted).
+/// (the inner wreq client is reference-counted).
+///
+/// Uses `wreq`'s Chrome TLS/HTTP2 emulation rather than a plain HTTP client:
+/// LeetCode's judge endpoints sit behind a Cloudflare bot challenge that keys
+/// off the TLS fingerprint, and a stock client gets served the challenge page
+/// (403) instead of a real response.
 #[derive(Clone)]
 pub struct LeetCodeClient {
-    http: reqwest::Client,
+    http: wreq::Client,
     csrf_token: Option<String>,
     base_url: String,
 }
@@ -31,16 +35,20 @@ impl LeetCodeClient {
     /// Build a client from persisted config, wiring up auth cookies/headers.
     pub fn from_config(cfg: &Config) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(UA));
         headers.insert(ORIGIN, HeaderValue::from_static(BASE_URL));
-        headers.insert(REFERER, HeaderValue::from_str(&format!("{BASE_URL}/"))?);
 
         if let Some(cookie) = cookie_header(cfg)? {
             headers.insert(COOKIE, cookie);
         }
 
-        let http = reqwest::Client::builder()
+        let http = wreq::Client::builder()
+            .emulation(Emulation::Chrome131)
             .default_headers(headers)
+            // Cloudflare's bot-management on the judge endpoints escalates
+            // scrutiny on a connection that's already carried an API call,
+            // even with a correct browser TLS fingerprint. Opening a fresh
+            // connection per request avoids that.
+            .pool_max_idle_per_host(0)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()
@@ -68,6 +76,7 @@ impl LeetCodeClient {
             .http
             .post(format!("{}/graphql", self.base_url))
             .header(CONTENT_TYPE, "application/json")
+            .header(REFERER, format!("{}/", self.base_url))
             .json(&body)
             .send()
             .await
@@ -208,7 +217,7 @@ impl LeetCodeClient {
         url: &str,
         referer: &str,
         body: &B,
-    ) -> Result<reqwest::Response> {
+    ) -> Result<wreq::Response> {
         let mut req = self
             .http
             .post(url)
@@ -236,8 +245,8 @@ impl LeetCodeClient {
         let status = resp.status();
         let text = resp.text().await.context("reading judge result")?;
         if !status.is_success() {
-            if status == reqwest::StatusCode::FORBIDDEN
-                || status == reqwest::StatusCode::UNAUTHORIZED
+            if status == wreq::StatusCode::FORBIDDEN
+                || status == wreq::StatusCode::UNAUTHORIZED
             {
                 bail!("judge request rejected ({status}); your session may have expired. Run `lcx login` again.");
             }

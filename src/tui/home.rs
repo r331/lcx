@@ -689,7 +689,6 @@ fn ui(f: &mut Frame, app: &mut App, cfg: &Config) {
                 .bg(Color::Rgb(255, 161, 22))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  LeetCode in your terminal"),
     ]);
     f.render_widget(Paragraph::new(title), root[0]);
 
